@@ -2,6 +2,8 @@ require 'twitter_ebooks'
 require './wordfilter.rb'
 require './config.rb'
 
+include Ebooks
+
 $banned_words = BANNED_WORDS
 
 # Information about a particular Twitter user we know
@@ -15,6 +17,62 @@ class UserInfo
   def initialize(username)
     @username = username
     @pesters_left = 1
+  end
+end
+
+class Ebooks::Model
+  def valid_tweet?(tikis, limit)
+    tweet = NLP.reconstruct(tikis, @tokens)
+
+    found_banned = $banned_words.any? do |word|
+      re = Regexp.new("\\b#{word}\\b", "i")
+      re.match tweet
+    end
+
+    found_wordfilter = Wordfilter::blacklisted?(tweet)
+
+    puts("tweet: #{tweet}")
+    puts("found_banned: #{found_banned}")
+    puts("found_wordfilter: #{found_wordfilter}")
+
+    tweet.length <= limit && !NLP.unmatched_enclosers?(tweet) && !found_banned && !found_wordfilter
+  end
+
+  def make_statement(limit=140, generator=nil, retry_limit=10)
+    responding = !generator.nil?
+    generator ||= SuffixGenerator.build(@sentences)
+
+    retries = 0
+    tweet = ""
+
+    while (tikis = generator.generate(3, :bigrams)) do
+      log "Attempting to produce tweet try #{retries+1}/#{retry_limit}"
+      next if tikis.length <= 3 && !responding
+      break if valid_tweet?(tikis, limit)
+
+      retries += 1
+      break if retries >= retry_limit
+    end
+
+    if verbatim?(tikis) && tikis.length > 3 # We made a verbatim tweet by accident
+      log "Attempting to produce unigram tweet try #{retries+1}/#{retry_limit}"
+      while (tikis = generator.generate(3, :unigrams)) do
+        break if valid_tweet?(tikis, limit) && !verbatim?(tikis)
+
+        retries += 1
+        break if retries >= retry_limit
+      end
+    end
+
+    tweet = NLP.reconstruct(tikis, @tokens)
+
+    if retries >= retry_limit
+      log "Unable to produce valid non-verbatim tweet"
+
+      tweet = "."
+    end
+
+    fix tweet
   end
 end
 
@@ -35,23 +93,10 @@ class CloneBot < Ebooks::Bot
   def top100; @top100 ||= model.keywords.take(100); end
   def top20;  @top20  ||= model.keywords.take(20); end
 
-  def valid_tweet?(tikis, limit)
-    tweet = NLP.reconstruct(tikis, @tokens)
-
-    found_banned = $banned_words.any? do |word|
-      re = Regexp.new("\\b#{word}\\b", "i")
-      re.match tweet
-    end
-
-    found_wordfilter = Wordfilter::blacklisted?(tweet)
-
-    tweet.length <= limit && !NLP.unmatched_enclosers?(tweet) && !found_banned && !found_wordfilter
-  end
-
   def on_startup
     load_model!
 
-    tweet(model.make_statement)
+    # tweet(model.make_statement)
 
     scheduler.cron '0 */3 * * *' do
       # every 3 hours, tweet
@@ -122,12 +167,12 @@ class CloneBot < Ebooks::Bot
   end
 
   def favorite(tweet)
-    if can_follow?(tweet.user.screen_name)
-      super(tweet)
-    else
-      log "Unfollowing @#{tweet.user.screen_name}"
-      twitter.unfollow(tweet.user.screen_name)
-    end
+    # if can_follow?(tweet.user.screen_name)
+    #   super(tweet)
+    # else
+    #   log "Unfollowing @#{tweet.user.screen_name}"
+    #   twitter.unfollow(tweet.user.screen_name)
+    # end
   end
 
   def on_follow(user)
@@ -145,7 +190,7 @@ class CloneBot < Ebooks::Bot
   end
 end
 
-CloneBot.new("sui_ebook") do |bot|
+CloneBot.new("sui_ebooks") do |bot|
   bot.access_token = "2557744674-fiXejJfGyHIvcqqZqEoIpfeGrI90ske6kNfc8Y6"
   bot.access_token_secret = "JRLaQYPAFe06W8eKOQ8D52DmZqXNVZEPtlTKEyBYsCOIl"
 
