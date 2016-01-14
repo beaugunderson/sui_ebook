@@ -98,8 +98,8 @@ class CloneBot < Ebooks::Bot
 
     # tweet(model.make_statement)
 
-    scheduler.cron '0 */3 * * *' do
-      # every 3 hours, tweet
+    scheduler.every '90m' do
+      # every 90 minutes, tweet
       tweet(model.make_statement)
     end
   end
